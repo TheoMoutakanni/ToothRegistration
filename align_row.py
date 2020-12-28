@@ -1,101 +1,84 @@
-import sys
+import argparse
+from os.path import join as pjoin
+import glob
+from tqdm import tqdm
+
 import igl
 import pymesh
-import scipy as sp
 import numpy as np
-from meshplot import plot, subplot, interact
-import matplotlib.pyplot as plt
-from sklearn.neighbors import KDTree
-from sklearn.decomposition import PCA
-import os
-from os.path import join as pjoin
-from fix_mesh import fix_mesh
+
+from registration.utils import (compute_pca_alignement, merge_rigid_deformations,
+                                align_mesh)
+
+parser = argparse.ArgumentParser()
+parser.add_argument("data", type=str, help="Data folder path")
+parser.add_argument("template", type=str, help="Template folder path")
+# parser.add_argument("-d", "--detail", type=str, default=0.2)
+args = parser.parse_args()
 
 
-def main():
-    args = sys.argv[1:]
+template_upper_row = pymesh.merge_meshes(
+    [pymesh.load_mesh(pjoin(args.template, "{}{}_clean.stl".format(j, i)))
+     for i in range(1, 8)
+     for j in [1, 2]])
 
-    foldername = str(args[0])
-    PER = str(args[1])
-    outfolder = str(args[2])
+template_lower_row = pymesh.merge_meshes(
+    [pymesh.load_mesh(pjoin(args.template, "{}{}_clean.stl".format(j, i)))
+     for i in range(1, 8)
+     for j in [1, 2]])
 
-    row1 = pymesh.merge_meshes(
-        [pymesh.load_mesh(foldername + "/Segmentation_" + PER + "_{}{}.stl".format(j, i))
+folders = glob.glob(pjoin(args.data, 'scan*'))
+for folder in tqdm(folders):
+
+    upper_row = pymesh.merge_meshes(
+        [pymesh.load_mesh(pjoin(folder, "{}{}_clean.stl".format(j, i)))
          for i in range(1, 8)
          for j in [1, 2]])
-    row2 = pymesh.merge_meshes(
-        [pymesh.load_mesh(foldername + "/Segmentation_" + PER + "_{}{}.stl".format(j, i))
+    lower_row = pymesh.merge_meshes(
+        [pymesh.load_mesh(pjoin(folder, "{}{}_clean.stl".format(j, i)))
          for i in range(1, 8)
-         for j in [3, 4]])
+         for j in [1, 2]])
 
-    row1 = fix_mesh(row1)
-    row2 = fix_mesh(row2)
+    # PCA alignement
 
-    pca = PCA(3)
-    pca.fit(row1.vertices)
+    R_upper_pca, T_upper_pca, S_upper_pca = compute_pca_alignement(
+        upper_row, template_upper_row)
 
-    pca2 = PCA(3)
-    pca2.fit(row2.vertices)
+    upper_row = align_mesh(upper_row, R_upper_pca, T_upper_pca, S_upper_pca)
 
-    # Translation
-    T_row_pca = pca2.mean_ - pca.mean_
+    R_lower_pca, T_lower_pca, S_lower_pca = compute_pca_alignement(
+        lower_row, template_lower_row)
 
-    norm_axis1 = pca.components_ / np.linalg.norm(pca.components_, axis=1)
-    norm_axis2 = pca2.components_ / np.linalg.norm(pca2.components_, axis=1)
+    lower_row = align_mesh(lower_row, R_lower_pca, T_lower_pca, S_lower_pca)
 
-    # Rotation as in https://math.stackexchange.com/questions/1125203/finding-rotation-axis-and-angle-to-align-two-3d-vector-bases
-    R_row_pca = np.einsum("ij,ik->ijk", norm_axis2, norm_axis1).sum(0)
-    # scale
-    S_row_pca = np.sqrt(pca2.singular_values_ / pca.singular_values_)
+    # ICP alignement
 
-    aligned_row1 = pymesh.form_mesh((row1.vertices - pca.mean_) @ R_row_pca * S_row_pca + pca.mean_ + T_row_pca,
-                                    row1.faces)
+    R_upper_icp, T_upper_icp = igl.iterative_closest_point(
+        upper_row.vertices, upper_row.faces,
+        template_upper_row.vertices, template_upper_row.faces,
+        num_samples=8000, max_iters=100)
 
+    upper_row = align_mesh(upper_row, R_upper_icp, T_upper_icp, np.ones(3))
 
-    R, T = igl.iterative_closest_point(aligned_row1.vertices, aligned_row1.faces, row2.vertices, row2.faces,
-                                       num_samples=8000, max_iters=100)
+    R_lower_icp, T_lower_icp = igl.iterative_closest_point(
+        lower_row.vertices, lower_row.faces,
+        template_lower_row.vertices, template_lower_row.faces,
+        num_samples=8000, max_iters=100)
 
-    final_aligned_row1 = pymesh.form_mesh(aligned_row1.vertices @ R + T, row1.faces)
+    lower_row = align_mesh(lower_row, R_lower_icp, T_lower_icp, np.ones(3))
 
+    R_upper, T_upper, S_upper = merge_rigid_deformations(
+        [R_upper_pca, R_upper_icp],
+        [T_upper_pca, T_upper_icp],
+        [S_upper_pca, np.ones(3)])
 
-
-
-
-
+    R_lower, T_lower, S_lower = merge_rigid_deformations(
+        [R_lower_pca, R_lower_icp],
+        [T_lower_pca, T_lower_icp],
+        [S_lower_pca, np.ones(3)])
 
 
     # save
-    #np.savetxt(outfolder + '/' + PER + '_pca_mean.txt', pca.mean_, delimiter=',')
-    np.savez(outfolder +'/'+ PER + '_T_row.npz', pca.mean_, T_row_pca, T)
-    np.savez(outfolder + '/' + PER + '_R_row.npz', R_row_pca, R)
-    #np.savetxt(outfolder +'/'+ PER + '_T_row.npy', [pca.mean_, T_row_pca, T], delimiter=',')
-    #np.savetxt(outfolder + '/' + PER + '_R_row.npy', [R_row_pca, R], delimiter=',')
-    np.savetxt(outfolder + '/' + PER + '_S_row_pca.txt', S_row_pca, delimiter=',')
-
-
-
-    #np.savetxt(outfolder +'/'+ PER + '_T.txt', T, delimiter=',')
-    #np.savetxt(outfolder +'/'+ PER + '_R.txt', R, delimiter=',')
-
-    pymesh.save_mesh_raw(outfolder +'/'+ PER +'_'+ "final_aligned_row1.stl", final_aligned_row1.vertices, final_aligned_row1.faces)
-    pymesh.save_mesh_raw(outfolder + '/' + PER +'_'+ "row1.stl", row1.vertices, row1.faces)
-    pymesh.save_mesh_raw(outfolder +'/'+ PER +'_'+ "row2.stl", row2.vertices, row2.faces)
-
-    print('end')
-
-
-
-
-if __name__ == "__main__":
-    main()
-
-
-
-
-
-
-
-
-
-
-
+    np.savez(pjoin(folder, "defo_row.npz"),
+        R_upper=R_upper, T_upper=T_upper, S_upper=S_upper,
+        R_lower=R_lower, T_lower=T_lower, S_lower=S_lower)
