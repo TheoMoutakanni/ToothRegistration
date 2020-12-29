@@ -67,6 +67,8 @@ for folder in tqdm(folders):
 
     lower_row = align_mesh(lower_row, R_lower_icp, T_lower_icp, np.ones(3))
 
+    # Final deformation
+
     R_upper, T_upper, S_upper = merge_rigid_deformations(
         [R_upper_pca, R_upper_icp],
         [T_upper_pca, T_upper_icp],

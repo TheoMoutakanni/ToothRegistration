@@ -25,6 +25,7 @@ except ValueError:
 folders = glob.glob(pjoin(args.data, 'scan*'))
 for folder in tqdm(folders):
     teeth = glob.glob(pjoin(folder, "*.stl"))
+    teeth = [p for p in teeth if len(p.split('/')[-1].split('.')[0])==2]
     for tooth in teeth:
         name = tooth.split('/')[-1].split('.')[0]
         M = pymesh.load_mesh(tooth)
