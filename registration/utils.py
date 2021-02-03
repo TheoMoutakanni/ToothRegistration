@@ -83,3 +83,36 @@ def merge_rigid_deformations(list_R, list_T, list_S):
 
 def align_mesh(M, R, T, S):
     return pymesh.form_mesh(M.vertices @ R * S + T, M.faces)
+
+def compute_laplacian(V, F):
+    """
+    Compute the Laplacian of the mesh
+    
+    args:
+        V: (N x 3) a numpy array of vertices' positions    ex: [ (x0,y0,z0), (x1,y1,z1) ...]
+        F: (M x 3) a numpy array of the faces of the triangular mesh (by vertex id) ex: [ (0,1,4), (2,4,5), ...]
+    return:
+        L: sparce_csr(N x N) the Laplacian matrix with cotangent weights
+    """
+    n = len(V)
+    W_ij = np.empty(0)
+    I = np.empty(0, np.int32)
+    J = np.empty(0, np.int32)
+    for i1, i2, i3 in [(0, 1, 2), (1, 2, 0), (2, 0, 1)]:
+        vi1 = F[:, i1]
+        vi2 = F[:, i2]
+        vi3 = F[:, i3]
+        u = V[vi2] - V[vi1]
+        v = V[vi3] - V[vi1]
+
+        cotan = (u * v).sum(axis=1) / np.linalg.norm(np.cross(u, v), -1)
+        W_ij = np.append(W_ij, 0.5 * cotan)
+        I = np.append(I, vi2)
+        J = np.append(J, vi3)
+        W_ij = np.append(W_ij, 0.5 * cotan)
+        I = np.append(I, vi3)
+        J = np.append(J, vi2)
+    L = sp.sparse.csr_matrix((W_ij, (I, J)), shape=(n, n))
+    L = L - sp.sparse.spdiags(L * np.ones(n), 0, n, n)
+    L = L.tocsr()
+    return L

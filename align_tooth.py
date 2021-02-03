@@ -26,6 +26,7 @@ folders = glob.glob(pjoin(args.data, 'scan*'))
 for folder in tqdm(folders):
     defo_row = np.load(pjoin(folder, args.defo_row))
     teeth_path = glob.glob(pjoin(folder, "*_clean.stl"))
+    alignment_dict = {}
     for tooth_path in teeth_path:
         name = tooth_path.split('/')[-1].split('_')[0]
         if name[1] == '8':
@@ -67,5 +68,8 @@ for folder in tqdm(folders):
             [S_pca, np.ones(3)])
 
         # save
-        np.savez(pjoin(folder, "defo_{}.npz".format(name)),
-                 R=R, T=T, S=S)
+        alignment_dict['R_{}'.format(name)] = R
+        alignment_dict['T_{}'.format(name)] = T
+        alignment_dict['S_{}'.format(name)] = S
+
+    np.savez(pjoin(folder, "defo_teeth.npz"), **alignment_dict)
